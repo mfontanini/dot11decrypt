@@ -18,6 +18,25 @@ traffic.
 This is **not** a WEP/WPA2 cracker, it is just a tool that allows you to
 use other tools that don't support the decryption of encrypted traffic.
 
+## Requirements ##
+-----
+
+The only requirement is [libtins >= v1.1](http://libtins.sourceforge.net), 
+compiled using support for WPA2 decryption(this is enabled by default),
+and a fairly recent C++ compiler. g++ 4.6 is enough, probably 4.5 works
+as well, but I haven't had the chance to try it.
+
+## Compilation ##
+-----
+
+In order to compile, just do  the usual:
+
+
+```Shell
+./configure
+make
+```
+
 ## Decryption data ##
 -----
 
@@ -45,3 +64,18 @@ handshake was captured will be decrypted.
 When the application is launched, a tap network interface will be 
 created. Every decrypted packet will be encapsulated using Ethernet 
 frames and written to that interface. 
+
+## Usage ##
+-----
+
+In order to use dot11decrypt, you need to specify the interface in which
+to listen and the decryption options:
+
+```Shell
+./dot11decrypt wlan0 wpa:MyAccessPoint:some_password
+./dot11decrypt mon0 wep:00:01:02:03:04:05:blahbleehh
+```
+
+The *wpa:* option allows you to decrypt
+
+You can provide as many decryption data tuples as you want.

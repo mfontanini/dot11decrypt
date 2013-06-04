@@ -21,7 +21,8 @@
  * 
  */
 
-
+// libtins
+#include <tins/tins.h>
 // linux/POSIX stuff
 #include <linux/if.h>
 #include <linux/if_tun.h>
@@ -30,6 +31,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <unistd.h>
 // STL
 #include <iostream>
 #include <atomic>
@@ -42,8 +44,6 @@
 #include <queue>
 #include <functional>
 #include <memory>
-// libtins
-#include <tins/tins.h>
 
 using namespace Tins;
 
@@ -76,6 +76,7 @@ public:
             ::close(fd);
         fd = invalid_fd;
         std::swap(fd, rhs.fd);
+        return *this;
     }
     
     ~unique_fd() 
