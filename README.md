@@ -18,6 +18,9 @@ traffic.
 This is **not** a WEP/WPA2 cracker, it is just a tool that allows you to
 use other tools that don't support the decryption of encrypted traffic.
 
+There's a more detailed explanation of this application in 
+[my blog](http://average-coder.blogspot.com/2013/06/decrypting-wepwpa2-traffic-on-fly.html).
+
 ## Requirements ##
 -----
 
