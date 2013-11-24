@@ -24,7 +24,7 @@ There's a more detailed explanation of this application in
 ## Requirements ##
 -----
 
-The only requirement is [libtins >= v1.1](http://libtins.sourceforge.net), 
+The only requirement is [libtins >= v1.1](http://libtins.github.io), 
 compiled using support for WPA2 decryption(this is enabled by default),
 and a fairly recent C++ compiler. g++ 4.6 is enough, probably 4.5 works
 as well, but I haven't had the chance to try it.
