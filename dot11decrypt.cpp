@@ -48,8 +48,31 @@
 
 using namespace Tins;
 
+using std::atomic;
+using std::lock_guard;
+using std::mutex;
+using std::unique_ptr;
+using std::unique_lock;
+using std::condition_variable;
+using std::move;
+using std::memset;
+using std::bind;
+using std::cout;
+using std::endl;
+using std::runtime_error;
+using std::invalid_argument;
+using std::exception;
+using std::thread;
+using std::swap;
+using std::tuple;
+using std::make_tuple;
+using std::string;
+using std::queue;
+using std::get;
+using std::vector;
+
 // our running flag
-std::atomic<bool> running;
+atomic<bool> running;
 
 // unique_fd - just a wrapper over a file descriptor which closes
 // the fd in its dtor. non-copyable but movable
@@ -59,47 +82,43 @@ public:
     static constexpr int invalid_fd = -1;
 
     unique_fd(int fd = invalid_fd) 
-    : fd(fd) 
-    {
+    : fd_(fd) {
         
     }
     
     
     unique_fd(unique_fd &&rhs) 
-    : fd(invalid_fd)
-    {
-        *this = std::move(rhs);
+    : fd_(invalid_fd) {
+        *this = move(rhs);
     }
     
-    unique_fd& operator=(unique_fd&& rhs) 
-    {
-        if(fd != invalid_fd)
-            ::close(fd);
-        fd = invalid_fd;
-        std::swap(fd, rhs.fd);
+    unique_fd& operator=(unique_fd&& rhs) {
+        if (fd_ != invalid_fd) {
+            ::close(fd_);
+        }
+        fd_ = invalid_fd;
+        swap(fd_, rhs.fd_);
         return *this;
     }
     
-    ~unique_fd() 
-    {
-        if(fd != invalid_fd)
-            ::close(fd);
+    ~unique_fd() {
+        if (fd_ != invalid_fd) {
+            ::close(fd_);
+        }
     }
     
     unique_fd(const unique_fd&) = delete;
     unique_fd& operator=(const unique_fd&) = delete;
     
-    int operator*() 
-    {
-        return fd;
+    int operator*() {
+        return fd_;
     }
     
-    operator bool() const
-    {
-        return fd != invalid_fd;
+    operator bool() const {
+        return fd_ != invalid_fd;
     }
 private:
-    int fd;
+    int fd_;
 };
 
 // packet_buffer - buffers packets, decrypts them and flushes them into 
@@ -107,55 +126,52 @@ private:
 
 class packet_buffer {
 public:
-    typedef std::unique_ptr<PDU> unique_pdu;
+    typedef unique_ptr<PDU> unique_pdu;
 
     packet_buffer(unique_fd fd, Crypto::WPA2Decrypter wpa2d,
-      Crypto::WEPDecrypter wepd)
-    : fd(std::move(fd)), wpa2_decrypter(std::move(wpa2d)), 
-    wep_decrypter(std::move(wepd))
-    {
-        
+                  Crypto::WEPDecrypter wepd)
+    : fd_(move(fd)), wpa2_decrypter_(move(wpa2d)), 
+    wep_decrypter_(move(wepd)) {
+    
     }
     
     packet_buffer(const packet_buffer&) = delete;
     packet_buffer& operator=(const packet_buffer&) = delete;
     
     ~packet_buffer() {
-        thread.join();
+        thread_.join();
     }
     
-    void add_packet(unique_pdu pkt) 
-    {
-        std::lock_guard<std::mutex> _(mtx);
-        packet_queue.push(std::move(pkt));
-        cond.notify_one();
+    void add_packet(unique_pdu pkt) {
+        lock_guard<mutex> _(mtx_);
+        packet_queue_.push(move(pkt));
+        cond_.notify_one();
     }
     
-    void stop_running() 
-    {
-        std::lock_guard<std::mutex> _(mtx);
-        cond.notify_one();
+    void stop_running() {
+        lock_guard<mutex> _(mtx_);
+        cond_.notify_one();
     }
     
-    void run() 
-    {
-        thread = std::thread(&packet_buffer::thread_proc, this);
+    void run() {
+        thread_ = thread(&packet_buffer::thread_proc, this);
     }    
 private:
-    EthernetII make_eth_packet(Dot11Data &dot11)
-    {
-        if(dot11.from_ds() && !dot11.to_ds())
+    EthernetII make_eth_packet(Dot11Data &dot11) {
+        if (dot11.from_ds() && !dot11.to_ds()) {
             return EthernetII(dot11.addr1(), dot11.addr3());
-        else if(!dot11.from_ds() && dot11.to_ds())
+        }
+        else if (!dot11.from_ds() && dot11.to_ds()) {
             return EthernetII(dot11.addr3(), dot11.addr2());
-        else 
+        }
+        else { 
             return EthernetII(dot11.addr1(), dot11.addr2());
+        }
     }
     
     template<typename Decrypter>
-    bool try_decrypt(Decrypter &decrypter, PDU &pdu) 
-    {
-        if(decrypter.decrypt(pdu)) {
+    bool try_decrypt(Decrypter &decrypter, PDU &pdu) {
+        if (decrypter.decrypt(pdu)) {
             auto &dot11 = pdu.rfind_pdu<Dot11Data>();
             auto &snap = pdu.rfind_pdu<SNAP>();
             // create an EthernetII using the src and dst addrs
@@ -163,45 +179,48 @@ private:
             // move the inner pdu into the EthernetII to avoid copying
             pkt.inner_pdu(snap.release_inner_pdu());
             auto buffer = pkt.serialize();
-            if(write(*fd, buffer.data(), buffer.size()) == -1)
-                throw std::runtime_error("Error writing to tap interface");
+            if (write(*fd_, buffer.data(), buffer.size()) == -1) {
+                throw runtime_error("Error writing to tap interface");
+            }
             // if the decrypter is successfull, then SUCCESS
             return true;
         }
         return false;
     }
 
-    void thread_proc() 
-    {
-        while(running) {
+    void thread_proc() {
+        while (running) {
             unique_pdu pkt;
             // critical section
             {
-                std::unique_lock<std::mutex> lock(mtx);
-                if(!running)
+                unique_lock<mutex> lock(mtx_);
+                if (!running) {
                     return;
-                if(packet_queue.empty()) {
-                    cond.wait(lock);
-                    // if it's still empty, then we're done
-                    if(packet_queue.empty())
-                        return;
                 }
-                pkt = std::move(packet_queue.front());
-                packet_queue.pop();
+                if (packet_queue_.empty()) {
+                    cond_.wait(lock);
+                    // if it's still empty, then we're done
+                    if (packet_queue_.empty()) {
+                        return;
+                    }
+                }
+                pkt = move(packet_queue_.front());
+                packet_queue_.pop();
             }
             // non-critical section
-            if(!try_decrypt(wpa2_decrypter, *pkt.get())) 
-                try_decrypt(wep_decrypter, *pkt.get());
+            if (!try_decrypt(wpa2_decrypter_, *pkt.get())) {
+                try_decrypt(wep_decrypter_, *pkt.get());
+            }
         }
     }
 
-    unique_fd fd;
-    std::thread thread;
-    std::mutex mtx;
-    std::condition_variable cond;
-    std::queue<unique_pdu> packet_queue;
-    Crypto::WPA2Decrypter wpa2_decrypter;
-    Crypto::WEPDecrypter wep_decrypter;
+    unique_fd fd_;
+    thread thread_;
+    mutex mtx_;
+    condition_variable cond_;
+    queue<unique_pdu> packet_queue_;
+    Crypto::WPA2Decrypter wpa2_decrypter_;
+    Crypto::WEPDecrypter wep_decrypter_;
 };
 
 
@@ -211,32 +230,28 @@ private:
 class traffic_decrypter {
 public:
     traffic_decrypter(unique_fd fd, Crypto::WPA2Decrypter wpa2d, 
-      Crypto::WEPDecrypter wepd)
-    : bufferer(std::move(fd), std::move(wpa2d), std::move(wepd))
-    {
+                      Crypto::WEPDecrypter wepd)
+    : bufferer_(move(fd), move(wpa2d), move(wepd)) {
         
     }
     
-    void decrypt_traffic(Sniffer &sniffer) 
-    {
+    void decrypt_traffic(Sniffer &sniffer) {
         using std::placeholders::_1;
         
-        bufferer.run();
-        sniffer.sniff_loop(std::bind(&traffic_decrypter::callback, this, _1));
-        bufferer.stop_running();
+        bufferer_.run();
+        sniffer.sniff_loop(bind(&traffic_decrypter::callback, this, _1));
+        bufferer_.stop_running();
     }
 private:
-    bool callback(PDU &pdu) 
-    {
-        if(pdu.find_pdu<Dot11>() == nullptr && pdu.find_pdu<RadioTap>() == nullptr)
-            throw std::runtime_error("Expected an 802.11 interface in monitor mode");
-        bufferer.add_packet(
-            packet_buffer::unique_pdu(pdu.clone())
-        );
+    bool callback(PDU &pdu) {
+        if (pdu.find_pdu<Dot11>() == nullptr && pdu.find_pdu<RadioTap>() == nullptr) {
+            throw runtime_error("Expected an 802.11 interface in monitor mode");
+        }
+        bufferer_.add_packet(packet_buffer::unique_pdu(pdu.clone()));
         return running;
     }
 
-    packet_buffer bufferer;
+    packet_buffer bufferer_;
 };
 
 
@@ -245,141 +260,137 @@ private:
 void if_up(const char *name) {
     int err, fd = socket(AF_INET, SOCK_DGRAM, 0);
     struct ifreq ifr;
-    std::memset(&ifr, 0, sizeof(ifr));
+    memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, name, IFNAMSIZ);
    
-    if( (err = ioctl(fd, SIOCGIFFLAGS, (void *) &ifr)) < 0 ) {
+    if ((err = ioctl(fd, SIOCGIFFLAGS, (void *) &ifr)) < 0) {
         close(fd);
-        std::cout << strerror(errno) << std::endl;
-        throw std::runtime_error("Failed get flags");
+        cout << strerror(errno) << endl;
+        throw runtime_error("Failed get flags");
     }
    
     ifr.ifr_flags |= IFF_UP|IFF_RUNNING;
    
-    if( (err = ioctl(fd, SIOCSIFFLAGS, (void *) &ifr)) < 0 ) {
+    if ((err = ioctl(fd, SIOCSIFFLAGS, (void *) &ifr)) < 0) {
         close(fd);
-        std::cout << strerror(errno) << std::endl;
-        throw std::runtime_error("Failed to bring the interface up");
+        cout << strerror(errno) << endl;
+        throw runtime_error("Failed to bring the interface up");
     }
 }
 
 // create_tap_dev - creates a tap device
 
-std::tuple<unique_fd, std::string> create_tap_dev() {
+tuple<unique_fd, string> create_tap_dev() {
     struct ifreq ifr;
     int err;
     char clonedev[] = "/dev/net/tun";
     unique_fd fd = open(clonedev, O_RDWR);
 
-    if(!fd)
-        throw std::runtime_error("Failed to open /dev/net/tun");
+    if (!fd) {
+        throw runtime_error("Failed to open /dev/net/tun");
+    }
 
     memset(&ifr, 0, sizeof(ifr));
 
     ifr.ifr_flags = IFF_TAP | IFF_NO_PI;   
 
-    if( (err = ioctl(*fd, TUNSETIFF, (void *) &ifr)) < 0 )
-        throw std::runtime_error("Failed to create tap device");
+    if ((err = ioctl(*fd, TUNSETIFF, (void *) &ifr)) < 0) {
+        throw runtime_error("Failed to create tap device");
+    }
 
-    return std::make_tuple(std::move(fd), ifr.ifr_name);
+    return make_tuple(move(fd), ifr.ifr_name);
 }
 
 // sig_handler - SIGINT handler, so we can release resources appropriately
-void sig_handler(int) 
-{
-    if(running) {
-        std::cout << "Stopping the sniffer...\n";
+void sig_handler(int) {
+    if (running) {
+        cout << "Stopping the sniffer...\n";
         running = false; 
     }
 }
 
 
-typedef std::tuple<
-            Crypto::WPA2Decrypter, 
-            Crypto::WEPDecrypter
-        > decrypter_tuple;
+typedef tuple<Crypto::WPA2Decrypter, Crypto::WEPDecrypter> decrypter_tuple;
 
 // Creates a traffic_decrypter and puts it to work
-void decrypt_traffic(unique_fd fd, const std::string &iface, decrypter_tuple tup) 
-{
+void decrypt_traffic(unique_fd fd, const string &iface, decrypter_tuple tup) {
     Sniffer sniffer(iface, 2500, false);
     traffic_decrypter decrypter(
-        std::move(fd), 
-        std::move(std::get<0>(tup)), 
-        std::move(std::get<1>(tup))
+        move(fd), 
+        move(get<0>(tup)), 
+        move(get<1>(tup))
     );
     decrypter.decrypt_traffic(sniffer);
 }
 
 // parses the arguments and returns a tuple (WPA2Decrypter, WEPDectyper)
 // throws if arguments are invalid
-decrypter_tuple parse_args(const std::vector<std::string> &args) 
-{
+decrypter_tuple parse_args(const vector<string> &args) {
     decrypter_tuple tup;
-    for(const auto &i : args) {
-        if(i.find("wpa:") == 0) {
+    for (const auto &i : args) {
+        if (i.find("wpa:") == 0) {
             auto pos = i.find(':', 4);
-            if(pos != std::string::npos) {
-                std::get<0>(tup).add_ap_data(
+            if (pos != string::npos) {
+                get<0>(tup).add_ap_data(
                     i.substr(pos + 1), // psk
                     i.substr(4, pos - 4) // ssid
                 );
             }
             else {
-                throw std::invalid_argument("Invalid decryption data");
+                throw invalid_argument("Invalid decryption data");
             }
         }
-        else if(i.find("wep:") == 0) {
-            const auto sz = std::string("00:00:00:00:00:00").size();
-            if(sz + 4 >= i.size())
-                throw std::invalid_argument("Invalid decryption data");
-            std::get<1>(tup).add_password(
+        else if (i.find("wep:") == 0) {
+            const auto sz = string("00:00:00:00:00:00").size();
+            if (sz + 4 >= i.size()) {
+                throw invalid_argument("Invalid decryption data");
+            }
+            get<1>(tup).add_password(
                 i.substr(5, sz), // bssid
                 i.substr(5 + sz) // passphrase
             );
         }
         else {
-            throw std::invalid_argument("Expected decription data.");
+            throw invalid_argument("Expected decription data.");
         }
     }
     return tup;
 }
 
-void print_usage(const char *arg0)
-{
-    std::cout << "Usage: " << arg0 << " <interface> DECRYPTION_DATA [DECRYPTION_DATA] [...]\n\n";
-    std::cout << "Where DECRYPTION_DATA can be: \n";
-    std::cout << "\twpa:SSID:PSK - to specify WPA2(AES or TKIP) decryption data.\n";
-    std::cout << "\twep:BSSID:KEY - to specify WEP decryption data.\n\n";
-    std::cout << "Examples:\n";
-    std::cout << "\t" << arg0 << " wlan0 wpa:MyAccessPoint:some_password\n";
-    std::cout << "\t" << arg0 << " mon0 wep:00:01:02:03:04:05:blahbleehh\n";
+void print_usage(const char *arg0){
+    cout << "Usage: " << arg0 << " <interface> DECRYPTION_DATA [DECRYPTION_DATA] [...]\n\n";
+    cout << "Where DECRYPTION_DATA can be: \n";
+    cout << "\twpa:SSID:PSK - to specify WPA2(AES or TKIP) decryption data.\n";
+    cout << "\twep:BSSID:KEY - to specify WEP decryption data.\n\n";
+    cout << "Examples:\n";
+    cout << "\t" << arg0 << " wlan0 wpa:MyAccessPoint:some_password\n";
+    cout << "\t" << arg0 << " mon0 wep:00:01:02:03:04:05:blahbleehh\n";
     exit(1);
 }
 
 int main(int argc, char *argv[]) 
 {
-    if(argc < 3) {
+    if (argc < 3) {
         print_usage(*argv);
     }
     try {
-        auto decrypters = parse_args(std::vector<std::string>(argv + 2, argv + argc));
-        std::string dev_name;
+        auto decrypters = parse_args(vector<string>(argv + 2, argv + argc));
+        string dev_name;
         unique_fd fd;
-        std::tie(fd, dev_name) = create_tap_dev();
-        std::cout << "Using device: " << dev_name << std::endl;
+        tie(fd, dev_name) = create_tap_dev();
+        cout << "Using device: " << dev_name << endl;
         if_up(dev_name.c_str());
-        std::cout << "Device is up.\n";
+        cout << "Device is up.\n";
         signal(SIGINT, sig_handler);
         running = true;
-        decrypt_traffic(std::move(fd), argv[1], std::move(decrypters));
-        std::cout << "Done\n";
+        decrypt_traffic(move(fd), argv[1], move(decrypters));
+        cout << "Done\n";
     }
-    catch(std::invalid_argument& ex) {
-        std::cout << "[-] " << ex.what() << std::endl;
+    catch(invalid_argument& ex) {
+        cout << "[-] " << ex.what() << endl;
         print_usage(*argv);
     }
-    catch(std::exception& ex) {
-        std::cout << "[-] " << ex.what() << std::endl;
+    catch(exception& ex) {
+        cout << "[-] " << ex.what() << endl;
     }
 }
