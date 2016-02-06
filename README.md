@@ -32,11 +32,13 @@ as well, but I haven't had the chance to try it.
 ## Compilation ##
 -----
 
-In order to compile, just do  the usual:
+In order to compile, run:
 
 
 ```Shell
-./configure
+mkdir build
+cd build
+cmake ..
 make
 ```
 
@@ -57,7 +59,7 @@ In order to decrypt WPA2, the application waits for Beacon frames, so
 as to identify the BSSIDs associated with each SSID. Afterwards, 
 it waits for EAPOL handshakes, which are required for decryption. Note
 that if the 4-way handshake is not processed, then decryption will not
-be successfull. After that, the traffic sent by clients for which the
+be successful. After that, the traffic sent by clients for which the
 handshake was captured will be decrypted.
 
 
@@ -79,6 +81,6 @@ to listen and the decryption options:
 ./dot11decrypt mon0 wep:00:01:02:03:04:05:blahbleehh
 ```
 
-The *wpa:* option allows you to decrypt
+The *wpa:* option allows you to decrypt both WPA and WPA2 encrypted packets.
 
 You can provide as many decryption data tuples as you want.

@@ -24,6 +24,7 @@
 // libtins
 #include <tins/tins.h>
 // linux/POSIX stuff
+#include <netinet/in.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <sys/ioctl.h>
