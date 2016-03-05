@@ -130,9 +130,14 @@ public:
 
     packet_buffer(unique_fd fd, Crypto::WPA2Decrypter wpa2d,
                   Crypto::WEPDecrypter wepd)
-    : fd_(move(fd)), wpa2_decrypter_(move(wpa2d)), 
-    wep_decrypter_(move(wepd)) {
-    
+    : fd_(move(fd)), wpa2_decrypter_(move(wpa2d)), wep_decrypter_(move(wepd)) {
+        // Requires libtins 3.4
+        #ifdef TINS_HAVE_WPA2_CALLBACKS
+        using namespace std::placeholders;
+        wpa2_decrypter_.ap_found_callback(bind(&packet_buffer::on_ap_found, this, _1, _2));
+        wpa2_decrypter_.handshake_captured_callback(bind(&packet_buffer::on_handshake_captured,
+                                                         this, _1, _2, _3));
+        #endif // TINS_HAVE_WPA2_CALLBACKS
     }
     
     packet_buffer(const packet_buffer&) = delete;
@@ -157,6 +162,8 @@ public:
         thread_ = thread(&packet_buffer::thread_proc, this);
     }    
 private:
+    typedef HWAddress<6> address_type;
+
     EthernetII make_eth_packet(Dot11Data &dot11) {
         if (dot11.from_ds() && !dot11.to_ds()) {
             return EthernetII(dot11.addr1(), dot11.addr3());
@@ -167,6 +174,15 @@ private:
         else { 
             return EthernetII(dot11.addr1(), dot11.addr2());
         }
+    }
+
+    void on_ap_found(const string& ssid, const address_type& bssid) {
+        cout << "AP found: " << ssid << ": " << bssid << endl;
+    }
+
+    void on_handshake_captured(const string& ssid, const address_type& bssid, 
+                               const address_type& client_hw) {
+        cout << "Captured handshake for " << ssid << " (" << bssid << "): " << client_hw << endl;
     }
     
     template<typename Decrypter>
