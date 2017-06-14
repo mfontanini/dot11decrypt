@@ -42,7 +42,7 @@ cmake ..
 make
 ```
 
-## Decryption data ##
+## Decrypting data ##
 -----
 
 In order to decrypt WEP/WPA2 encrypted frames, the following data is
