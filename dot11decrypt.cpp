@@ -194,7 +194,14 @@ private:
             auto pkt = make_eth_packet(dot11);
             // move the inner pdu into the EthernetII to avoid copying
             pkt.inner_pdu(snap.release_inner_pdu());
-            auto buffer = pkt.serialize();
+            vector<uint8_t> buffer;
+            try {
+                buffer = pkt.serialize();
+            }
+            catch (Tins::serialization_error) {
+                std::cerr << "Serialization error!";
+                return false;
+            }
             if (write(*fd_, buffer.data(), buffer.size()) == -1) {
                 throw runtime_error("Error writing to tap interface");
             }
