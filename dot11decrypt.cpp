@@ -58,6 +58,7 @@ using std::move;
 using std::memset;
 using std::bind;
 using std::cout;
+using std::cerr;
 using std::endl;
 using std::runtime_error;
 using std::invalid_argument;
@@ -199,7 +200,7 @@ private:
                 buffer = pkt.serialize();
             }
             catch (Tins::serialization_error) {
-                std::cerr << "Serialization error!";
+                cerr << "Serialization error!" << endl;
                 return false;
             }
             if (write(*fd_, buffer.data(), buffer.size()) == -1) {
