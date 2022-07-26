@@ -58,6 +58,7 @@ using std::move;
 using std::memset;
 using std::bind;
 using std::cout;
+using std::cerr;
 using std::endl;
 using std::runtime_error;
 using std::invalid_argument;
@@ -194,7 +195,14 @@ private:
             auto pkt = make_eth_packet(dot11);
             // move the inner pdu into the EthernetII to avoid copying
             pkt.inner_pdu(snap.release_inner_pdu());
-            auto buffer = pkt.serialize();
+            vector<uint8_t> buffer;
+            try {
+                buffer = pkt.serialize();
+            }
+            catch (Tins::serialization_error) {
+                cerr << "Serialization error!" << endl;
+                return false;
+            }
             if (write(*fd_, buffer.data(), buffer.size()) == -1) {
                 throw runtime_error("Error writing to tap interface");
             }
